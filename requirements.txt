@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+llama-cloud-services
+llama-index
