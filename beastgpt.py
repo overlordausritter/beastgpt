@@ -11,7 +11,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-@app.post("/llamaquery")
+@app.post("llamaquery")
 async def llamaquery(request: Request):
     """
     Handles general queries against the LlamaIndex index.
