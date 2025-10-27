@@ -1,1 +1,1 @@
-web: llamaquery_api:app --host 0.0.0.0 --port 8000
+web: beastgpt:app --host 0.0.0.0 --port 8000
