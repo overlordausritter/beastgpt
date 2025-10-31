@@ -1,11 +1,4 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-httpx==0.27.0
-
-# LlamaIndex modern packages (Python 3.12+)
-llama-index==0.11.14
-llama-index-core==0.11.14
-llama-index-llms-openai==0.2.8
-llama-index-cloud==0.1.8
-
-python-dotenv==1.0.1
+fastapi
+uvicorn
+llama-cloud-services
+llama-index
