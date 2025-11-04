@@ -67,7 +67,7 @@ async def llamaquery(request: Request):
             client=client,
             create_if_not_exists=True,
             mode=CompositeRetrievalMode.FULL,
-            rerank_top_n=10,
+            rerank_top_n=6,
         )
 
         # Attach sub-indices with clear descriptions
