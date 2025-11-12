@@ -116,7 +116,7 @@ async def llamaquery(request: Request):
 
     # --- Truncate overly long text using LlamaIndex helpers ---
     text_chunks = [r["text"] for r in results if r["text"]]
-    prompt_helper = PromptHelper(context_window=120000, num_output=1024)
+    prompt_helper = PromptHelper(context_window=50000, num_output=1024)
     prompt = PromptTemplate("Your prompt: {text}")
     truncated_chunks = prompt_helper.truncate(prompt=prompt, text_chunks=text_chunks)
 
