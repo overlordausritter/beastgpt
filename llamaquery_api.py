@@ -4,8 +4,7 @@ from llama_cloud_services import (
     LlamaCloudCompositeRetriever,
 )
 from llama_cloud import CompositeRetrievalMode
-from llama_index.core.indices.prompt_helper import PromptHelper
-from llama_index.core.prompts import PromptTemplate
+from llama_index.core.node_parser.text.token import TokenTextSplitter
 import httpx
 import asyncio
 import os
@@ -27,7 +26,7 @@ app = FastAPI(
 async def llamaquery(request: Request):
     """
     Handles queries against both LlamaIndex indices using Composite Retrieval (FULL mode).
-    Returns structured text chunks and metadata.
+    Applies token-based chunk splitting (1024 tokens per chunk) to the retrieved text.
     """
     data = await request.json()
     query = data.get("query")
@@ -60,7 +59,7 @@ async def llamaquery(request: Request):
             client=client,
         )
 
-        # Composite retriever
+        # Composite retriever with explicit authentication (Option A)
         composite_retriever = LlamaCloudCompositeRetriever(
             name="The Beast Composite Retriever",
             project_name="The BEAST",
@@ -72,6 +71,7 @@ async def llamaquery(request: Request):
             rerank_top_n=6,
         )
 
+        # Attach sub-indices with clear descriptions
         composite_retriever.add_index(
             deal_index,
             description="Deal-specific materials such as data rooms, pitch decks, and company diligence files.",
@@ -93,6 +93,15 @@ async def llamaquery(request: Request):
                 else:
                     return {"error": f"Llama Cloud connection failed: {str(e)}"}
 
+    # Initialize token-based splitter
+    splitter = TokenTextSplitter.from_defaults(
+        chunk_size=1024,
+        chunk_overlap=20,
+        separator=' ',
+        backup_separators=['\n'],
+        keep_whitespaces=False
+    )
+
     # Build structured chunk-level results
     results = []
     for node in nodes or []:
@@ -106,21 +115,20 @@ async def llamaquery(request: Request):
         web_url = metadata.get("web_url")
         text = getattr(node, "text", "")
 
-        results.append(
-            {
-                "text": text,
-                "file_name": file_name,
-                "web_url": web_url,
-            }
-        )
+        # Split text into token chunks
+        token_chunks = splitter.split_text(text)
 
-    # --- Truncate overly long text using LlamaIndex helpers ---
-    text_chunks = [r["text"] for r in results if r["text"]]
-    prompt_helper = PromptHelper(context_window=30000, num_output=1024)
-    prompt = PromptTemplate("Your prompt: {text}")
-    truncated_chunks = prompt_helper.truncate(prompt=prompt, text_chunks=text_chunks)
+        for chunk in token_chunks:
+            results.append(
+                {
+                    "text": chunk,
+                    "file_name": file_name,
+                    "web_url": web_url,
+                }
+            )
 
-    combined_text = "\n".join(truncated_chunks)
+    # Combine all text chunks into one string
+    combined_text = "\n".join([r["text"] for r in results if r["text"]])
 
     return {
         "query": query,
