@@ -4,6 +4,8 @@ from llama_cloud_services import (
     LlamaCloudCompositeRetriever,
 )
 from llama_cloud import CompositeRetrievalMode
+from llama_index.core.indices.prompt_helper import PromptHelper
+from llama_index.core.prompts import PromptTemplate
 import httpx
 import asyncio
 import os
@@ -58,7 +60,7 @@ async def llamaquery(request: Request):
             client=client,
         )
 
-        # Composite retriever with explicit authentication (Option A)
+        # Composite retriever
         composite_retriever = LlamaCloudCompositeRetriever(
             name="The Beast Composite Retriever",
             project_name="The BEAST",
@@ -70,7 +72,6 @@ async def llamaquery(request: Request):
             rerank_top_n=6,
         )
 
-        # Attach sub-indices with clear descriptions
         composite_retriever.add_index(
             deal_index,
             description="Deal-specific materials such as data rooms, pitch decks, and company diligence files.",
@@ -113,8 +114,13 @@ async def llamaquery(request: Request):
             }
         )
 
-    # Combine all text chunks into one string
-    combined_text = "\n".join([r["text"] for r in results if r["text"]])
+    # --- Truncate overly long text using LlamaIndex helpers ---
+    text_chunks = [r["text"] for r in results if r["text"]]
+    prompt_helper = PromptHelper(context_window=32000, num_output=1024)
+    prompt = PromptTemplate("Your prompt: {text}")
+    truncated_chunks = prompt_helper.truncate(prompt=prompt, text_chunks=text_chunks)
+
+    combined_text = "\n".join(truncated_chunks)
 
     return {
         "query": query,
