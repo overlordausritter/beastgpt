@@ -8,7 +8,7 @@ import httpx
 import asyncio
 import os
 import uvicorn
-
+import json
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -19,7 +19,6 @@ app = FastAPI(
     ),
     version="2.0.0",
 )
-
 
 @app.post("/llamaquery")
 async def llamaquery(request: Request):
@@ -103,11 +102,13 @@ async def llamaquery(request: Request):
             }
         )
 
-    return {
+    # Convert final JSON response to a string before returning
+    final_output = json.dumps({
         "query": query,
         "results": results
-    }
+    })
 
+    return final_output  # <-- returns as plain string, not JSON object
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
