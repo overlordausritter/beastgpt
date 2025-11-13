@@ -107,7 +107,7 @@ async def llamaquery(request: Request):
         node_wrappers.append(NodeWithScore(node=Node(text=node_obj.text), score=score))
 
     # Initialize GPT-5 LLM
-    llm = OpenAI(model="gpt-5", api_key=openai_api_key, temperature=0.2)
+    llm = OpenAI(model="gpt-4o", api_key=openai_api_key, temperature=0.2)
 
     # Initialize response synthesizer (compact mode)
     response_synthesizer = get_response_synthesizer(
