@@ -4,6 +4,10 @@ from llama_cloud_services import (
     LlamaCloudCompositeRetriever,
 )
 from llama_cloud import CompositeRetrievalMode
+from llama_index.core import get_response_synthesizer
+from llama_index.core.response_synthesizers import ResponseMode
+from llama_index.core.schema import NodeWithScore, Node
+from llama_index.llms.openai import OpenAI
 import httpx
 import asyncio
 import os
@@ -14,18 +18,19 @@ import uvicorn
 app = FastAPI(
     title="The Beast API",
     description=(
-        "Composite Retrieval API combining deal and thematic indices. "
-        "Queries across both Llama Cloud indices: Sharepoint Deal Pipeline and SharePoint Thematic Work."
+        "Composite Retrieval + LLM Response API. "
+        "Combines retrieval from SharePoint Deal Pipeline and Thematic indices "
+        "and synthesizes a GPT-5 response."
     ),
-    version="2.0.0",
+    version="2.1.0",
 )
 
 
 @app.post("/llamaquery")
 async def llamaquery(request: Request):
     """
-    Handles queries against both LlamaIndex indices using Composite Retrieval (FULL mode).
-    Returns structured text chunks and metadata.
+    Handles queries across multiple Llama Cloud indices, synthesizes an LLM answer
+    using GPT-5 via LlamaIndex response synthesizer.
     """
     data = await request.json()
     query = data.get("query")
@@ -33,10 +38,10 @@ async def llamaquery(request: Request):
         return {"error": "Missing 'query' in request body"}
 
     llama_api_key = os.getenv("LLAMA_API_KEY")
-    if not llama_api_key:
-        return {"error": "Missing LLAMA_API_KEY environment variable"}
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not llama_api_key or not openai_api_key:
+        return {"error": "Missing one or more required API keys"}
 
-    # Custom HTTP client with extended timeouts
     timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         project_name = "The BEAST"
@@ -52,16 +57,16 @@ async def llamaquery(request: Request):
 
         thematic_index = LlamaCloudIndex(
             name="SharePoint Thematic Work",
-            project_name="The BEAST",
+            project_name=project_name,
             organization_id="8ff953cd-9c16-49f2-93a4-732206133586",
             api_key=llama_api_key,
             client=client,
         )
 
-        # Composite retriever with explicit authentication (Option A)
+        # Composite retriever (FULL mode for merged retrieval)
         composite_retriever = LlamaCloudCompositeRetriever(
             name="The Beast Composite Retriever",
-            project_name="The BEAST",
+            project_name=project_name,
             organization_id="8ff953cd-9c16-49f2-93a4-732206133586",
             api_key=llama_api_key,
             client=client,
@@ -70,17 +75,16 @@ async def llamaquery(request: Request):
             rerank_top_n=6,
         )
 
-        # Attach sub-indices with clear descriptions
         composite_retriever.add_index(
             deal_index,
-            description="Deal-specific materials such as data rooms, pitch decks, and company diligence files.",
+            description="Deal-specific materials (data rooms, decks, diligence).",
         )
         composite_retriever.add_index(
             thematic_index,
-            description="Market research, news, and sectoral analysis supporting deal context.",
+            description="Market research and sector analyses supporting deal context.",
         )
 
-        # Retry logic for transient network issues
+        # Retry for transient retrieval issues
         for attempt in range(3):
             try:
                 nodes = await asyncio.to_thread(composite_retriever.retrieve, query)
@@ -92,9 +96,34 @@ async def llamaquery(request: Request):
                 else:
                     return {"error": f"Llama Cloud connection failed: {str(e)}"}
 
-    # Build structured chunk-level results
+    if not nodes:
+        return {"query": query, "response": "No relevant documents found.", "results": []}
+
+    # Prepare Nodes for response synthesizer
+    node_wrappers = []
+    for node in nodes:
+        node_obj = getattr(node, "node", node)
+        score = getattr(node, "score", 1.0)
+        node_wrappers.append(NodeWithScore(node=Node(text=node_obj.text), score=score))
+
+    # Initialize GPT-5 LLM
+    llm = OpenAI(model="gpt-4o", api_key=openai_api_key, temperature=0.2)
+
+    # Initialize response synthesizer (compact mode)
+    response_synthesizer = get_response_synthesizer(
+        llm=llm,
+        response_mode=ResponseMode.COMPACT,
+        structured_answer_filtering=True,
+    )
+
+    # Generate synthesized answer
+    synthesized = await asyncio.to_thread(
+        response_synthesizer.synthesize, query, nodes=node_wrappers
+    )
+
+    # Structure chunk-level metadata
     results = []
-    for node in nodes or []:
+    for node in nodes:
         node_obj = getattr(node, "node", node)
         metadata = getattr(node_obj, "metadata", {}) or {}
         file_name = (
@@ -104,22 +133,15 @@ async def llamaquery(request: Request):
         )
         web_url = metadata.get("web_url")
         text = getattr(node, "text", "")
-
         results.append(
-            {
-                "text": text,
-                "file_name": file_name,
-                "web_url": web_url,
-            }
+            {"text": text, "file_name": file_name, "web_url": web_url}
         )
-
-    # Combine all text chunks into one string
-    combined_text = "\n".join([r["text"] for r in results if r["text"]])
 
     return {
         "query": query,
-        "text": combined_text.strip()
+        "response": synthesized.response  # synthesized LLM answer
     }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
