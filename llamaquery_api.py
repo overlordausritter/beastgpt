@@ -118,10 +118,8 @@ async def llamaquery(request: Request):
 
     return {
         "query": query,
-        "text": combined_text.strip(),
-        "results": results,
+        "text": combined_text.strip()
     }
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
