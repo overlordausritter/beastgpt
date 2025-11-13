@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from llama_cloud_services import (
     LlamaCloudIndex,
     LlamaCloudCompositeRetriever,
@@ -8,6 +10,7 @@ import httpx
 import asyncio
 import os
 import uvicorn
+import json
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -16,14 +19,22 @@ app = FastAPI(
         "Composite Retrieval API combining deal and thematic indices. "
         "Queries across both Llama Cloud indices: Sharepoint Deal Pipeline and SharePoint Thematic Work."
     ),
-    version="2.0.0",
+    version="2.1.0",
 )
+
+# Add gzip compression for large payloads
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# Threshold (bytes) to switch to streaming
+STREAM_THRESHOLD = 3_000_000  # ~3MB
+
 
 @app.post("/llamaquery")
 async def llamaquery(request: Request):
     """
     Handles queries against both LlamaIndex indices using Composite Retrieval (FULL mode).
-    Returns combined text, file names, and web URLs.
+    Returns structured text chunks and metadata.
+    If response exceeds ~3MB, switches to streaming mode automatically.
     """
     data = await request.json()
     query = data.get("query")
@@ -38,7 +49,6 @@ async def llamaquery(request: Request):
     async with httpx.AsyncClient(timeout=timeout) as client:
         project_name = "The BEAST"
 
-        # Initialize indices
         deal_index = LlamaCloudIndex(
             name="Sharepoint Deal Pipeline",
             project_name=project_name,
@@ -46,6 +56,7 @@ async def llamaquery(request: Request):
             api_key=llama_api_key,
             client=client,
         )
+
         thematic_index = LlamaCloudIndex(
             name="SharePoint Thematic Work",
             project_name=project_name,
@@ -54,7 +65,6 @@ async def llamaquery(request: Request):
             client=client,
         )
 
-        # Composite retriever
         composite_retriever = LlamaCloudCompositeRetriever(
             name="The Beast Composite Retriever",
             project_name=project_name,
@@ -75,7 +85,7 @@ async def llamaquery(request: Request):
             description="Market research, news, and sectoral analysis supporting deal context.",
         )
 
-        # Retry logic
+        # Retry logic for transient network issues
         for attempt in range(3):
             try:
                 nodes = await asyncio.to_thread(composite_retriever.retrieve, query)
@@ -87,27 +97,47 @@ async def llamaquery(request: Request):
                 else:
                     return {"error": f"Llama Cloud connection failed: {str(e)}"}
 
-    # Build combined outputs directly
-    text_parts, file_parts, url_parts = [], [], []
+    # Build structured results
+    results = []
     for node in nodes or []:
         node_obj = getattr(node, "node", node)
         metadata = getattr(node_obj, "metadata", {}) or {}
-
-        text_parts.append(getattr(node, "text", ""))
-        file_parts.append(
+        file_name = (
             metadata.get("file_name")
             or metadata.get("filename")
             or metadata.get("document_title")
-            or ""
         )
-        url_parts.append(metadata.get("web_url") or "")
+        web_url = metadata.get("web_url")
+        text = getattr(node, "text", "")
 
+        results.append(
+            {
+                "text": text,
+                "file_name": file_name,
+                "web_url": web_url,
+            }
+        )
+
+    # Combine all text chunks
+    combined_text = "\n".join([r["text"] for r in results if r["text"]])
+
+    # Estimate JSON size in bytes
+    estimated_size = sum(len(r["text"]) for r in results if r["text"])
+
+    # --- Adaptive streaming switch ---
+    if estimated_size > STREAM_THRESHOLD:
+        async def generate():
+            for r in results:
+                yield json.dumps(r) + "\n"
+        return StreamingResponse(generate(), media_type="application/json")
+
+    # Otherwise, return buffered (normal JSON)
     return {
         "query": query,
-        "text": "\n".join([t for t in text_parts if t]).strip(),
-        "file_name": "\n".join([f for f in file_parts if f]).strip(),
-        "web_url": "\n".join([u for u in url_parts if u]).strip(),
+        "results": results,
+        "text": combined_text.strip(),
     }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
