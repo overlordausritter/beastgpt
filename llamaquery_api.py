@@ -106,7 +106,7 @@ async def llamaquery(request: Request):
     # Initialize response synthesizer (compact mode)
     response_synthesizer = get_response_synthesizer(
         llm=llm,
-        response_mode=ResponseMode.COMPACT,
+        response_mode=ResponseMode.REFINE,
         structured_answer_filtering=True,
     )
 
