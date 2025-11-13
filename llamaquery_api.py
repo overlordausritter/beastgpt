@@ -34,7 +34,7 @@ async def llamaquery(request: Request):
     """
     data = await request.json()
     query = data.get("query")
-    query = query + " return all citations with web_url and file_name"
+    query = query + ". In addition to answering the question in as much depth as possible, return all citations with web_url and file_name"
     if not query:
         return {"error": "Missing 'query' in request body"}
 
