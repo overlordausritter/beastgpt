@@ -99,13 +99,6 @@ async def llamaquery(request: Request):
     if not nodes:
         return {"query": query, "response": "No relevant documents found.", "results": []}
 
-    # Prepare Nodes for response synthesizer
-    node_wrappers = []
-    for node in nodes:
-        node_obj = getattr(node, "node", node)
-        score = getattr(node, "score", 1.0)
-        node_wrappers.append(NodeWithScore(node=Node(text=node_obj.text), score=score))
-
     # Initialize GPT-5 LLM
     llm = OpenAI(model="gpt-4o", api_key=openai_api_key, temperature=0.2)
 
@@ -118,9 +111,9 @@ async def llamaquery(request: Request):
 
     # Generate synthesized answer
     synthesized = await asyncio.to_thread(
-        response_synthesizer.synthesize, query, nodes=node_wrappers
+        response_synthesizer.synthesize, query, nodes
     )
-
+    print(synthesized.response)
     # Structure chunk-level metadata
     results = []
     for node in nodes:
